@@ -16,17 +16,28 @@ import (
 )
 
 // stagingGrace is how old a staging directory must be before it counts as orphaned. Create stages every backup in
-// a directory next to its destination; a crash or hard kill leaves it behind. The grace keeps the sweep away from a
-// backup another process (the offline CLI) may be writing into the same folder right now.
+// a directory next to its destination; a crash or hard kill leaves it behind. The age is the directory's own
+// filesystem mtime against the wall clock (not the service clock), and only covers the moment between the directory
+// being created and Create locking it. What protects a backup another process (the offline CLI) is writing into the
+// same folder is its flock on the directory (see stageLock): the sweep skips a directory it cannot lock, however old.
 const stagingGrace = time.Hour
 
 // reStaging is exactly the name os.MkdirTemp gives the staging directory of a backup (".<id>.tmp-<digits>").
 var reStaging = regexp.MustCompile(`^\.bkp_[0-9a-z]{26}\.tmp-[0-9]+$`)
 
+// reStaged is the name a backup has in the staging folder of a remote target: Create renames the staging directory to
+// it before the upload. On a local target that name is the finished backup, so it is only swept for remote targets.
+var reStaged = regexp.MustCompile(`^bkp_[0-9a-z]{26}$`)
+
+func isStagingName(name string, remote bool) bool {
+	return reStaging.MatchString(name) || remote && reStaged.MatchString(name)
+}
+
 // SweepStaging removes the staging directories a crashed backup left in the target's staging folder, and records
 // what it removed in the log and the audit trail. It does nothing while a backup or verification runs. Only real
-// directories whose name matches the staging pattern exactly and that are older than stagingGrace are removed; a
-// symlink with such a name is never followed (it is left alone).
+// directories whose name matches the staging pattern exactly (on remote targets also the renamed bkp_<id> directory),
+// that are older than stagingGrace and that no running backup holds the lock of are removed; a symlink with such a
+// name is never followed (it is left alone).
 func (s *Service) SweepStaging(ctx context.Context) (int, error) {
 	if !s.claim() {
 		return 0, nil
@@ -44,19 +55,33 @@ func (s *Service) sweepStaging(ctx context.Context) (int, error) {
 	} else if err != nil {
 		return 0, err
 	}
-	now := s.o.Clock.Now()
+	remote := s.o.Target.Kind() != "local"
+	now := time.Now()
 	var removed []string
 	var firstErr error
 	for _, d := range des {
 		// d.Type comes from lstat: a symlink is not a directory here.
-		if !d.Type().IsDir() || !reStaging.MatchString(d.Name()) {
+		if !d.Type().IsDir() || !isStagingName(d.Name(), remote) {
 			continue
 		}
 		info, err := d.Info()
 		if err != nil || now.Sub(info.ModTime()) < stagingGrace {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(dir, d.Name())); err != nil {
+		p := filepath.Join(dir, d.Name())
+		lock, busy, err := lockStageDir(p, false)
+		if busy {
+			continue // a running backup (possibly in another process) holds it
+		}
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) && firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		err = os.RemoveAll(p)
+		lock.release()
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
