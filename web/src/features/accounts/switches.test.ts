@@ -15,6 +15,7 @@ describe('reasonLabel', () => {
   it('words a known reason and tolerates an unknown one', () => {
     expect(reasonLabel('reset_near')).toBe('the limit was about to reset')
     expect(reasonLabel('something_new')).toBe('something new')
+    expect(reasonLabel('task_moved')).toBe("the run's task moved on")
     expect(reasonLabel()).toBe('')
   })
   it('words a switch-back with its own wording where it has one', () => {
