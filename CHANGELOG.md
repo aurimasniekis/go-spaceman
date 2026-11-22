@@ -12,7 +12,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   limit was stopped, or its task was in review, done or blocked, the account switch (or the reset) still continued it
   as a new run. Stopping a parked run now gives up its limit wait (reason `run_stopped`), and a wait whose task isn't
   running is cancelled instead of resumed (reason `task_moved`). This also holds for a run parked after its task was
-  already done, failed or cancelled.
+  already done, failed or cancelled: its wait is given up when the run is parked, and control gets no "will resume"
+  message and the usage-limit hold doesn't count that task. A run that holds several tasks is parked with the one still
+  being worked on (a running task before one in review, even when that was updated later), and control still hears
+  when such a run ends if its wait was given up at park.
 - **A stop that arrived just as a parked run was being resumed is no longer lost.** Stopping a parked run in the moment
   its resume had been claimed but not yet launched left the wait alone, and a new run started anyway. The stop now also
   gives up a wait that is being resumed, and the launch is rolled back.

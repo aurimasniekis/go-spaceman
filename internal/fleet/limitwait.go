@@ -274,14 +274,28 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	case !errors.Is(err, sql.ErrNoRows):
 		return nil, err
 	}
+	finished := false // the run's task is already done, failed or cancelled
 	if r.Kind != "control" {
 		if !w.ReleaseAt.Valid {
 			w.ReleaseAt = sql.NullInt64{Int64: now.Add(ul.MaxWait).UnixMicro(), Valid: true}
 		}
-		// Even a task that is done, failed or cancelled is recorded: the resume check then gives the wait up as task_moved
-		// instead of resuming a worker that has nothing to do.
-		if w.TaskID, err = assignedTaskOf(ctx, tx, r.ID); err != nil {
+		// The task still being worked on wins over a finished one that was touched later. With none active, the wait
+		// records the assigned task: if it is finished, the wait is given up below as task_moved instead of resuming a
+		// worker that has nothing to do.
+		if w.TaskID, err = activeTaskOf(ctx, tx, r.ID); err != nil {
 			return nil, err
+		}
+		if w.TaskID == "" {
+			if w.TaskID, err = assignedTaskOf(ctx, tx, r.ID); err != nil {
+				return nil, err
+			}
+			if w.TaskID != "" {
+				t, err := tx.Q.GetTask(ctx, w.TaskID)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+				finished = err == nil && (t.Status == "done" || t.Status == "failed" || t.Status == "cancelled")
+			}
 		}
 	}
 	if r.Turn > 0 {
@@ -342,6 +356,21 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 		if err := svc.switchParkedTx(ctx, tx, *sw, w.ID); err != nil {
 			return nil, err
 		}
+	}
+	if finished {
+		// Nothing is left to resume: give the wait up now, and tell control nothing (it would promise a resume message
+		// that never comes). A switch is cancelled with it.
+		cur, err := tx.Q.GetLimitWait(ctx, w.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := svc.settleWaitTx(ctx, tx, cur, WaitCancelled, WaitTaskMoved, LimitWaitActor); err != nil {
+			return nil, err
+		}
+		w.State, w.LastError = WaitCancelled, WaitTaskMoved
+		return &w, nil
+	}
+	if sw != nil {
 		if evSwitch, err = svc.switchOfWait(ctx, tx.Q, w); err != nil {
 			return nil, err
 		}
@@ -364,24 +393,16 @@ func assignedTaskOf(ctx context.Context, tx *store.Tx, runID string) (string, er
 	return id, err
 }
 
-// activeTaskOf returns the task assigned to a run that is still being worked on (running, blocked or in review), or "".
+// activeTaskOf returns the task assigned to a run that is still being worked on (running, blocked or in review), or "". A running task wins over a blocked
+// one, and that over one in review, whatever was updated last.
 func activeTaskOf(ctx context.Context, tx *store.Tx, runID string) (string, error) {
-	id, err := tx.Q.GetTaskIDForRun(ctx, runID)
+	var id string
+	err := tx.SQL.QueryRowContext(ctx, `SELECT id FROM tasks WHERE assignee_run = ? AND status IN ('running', 'blocked', 'review')
+		ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END, updated_at DESC, id LIMIT 1`, runID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
-	} else if err != nil {
-		return "", err
 	}
-	t, err := tx.Q.GetTask(ctx, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	} else if err != nil {
-		return "", err
-	}
-	if t.AssigneeRun == runID && (t.Status == "running" || t.Status == "blocked" || t.Status == "review") {
-		return t.ID, nil
-	}
-	return "", nil
+	return id, err
 }
 
 // resumeFailedTx handles a resumed run that ended (failed, or exited) before its first turn: its --resume didn't work
