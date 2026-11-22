@@ -55,6 +55,7 @@ const (
 	WaitInterrupted     = "interrupted"
 	WaitSuperseded      = "superseded"
 	WaitTaskMoved       = "task_moved"
+	WaitRunStopped      = "run_stopped"
 	WaitSpaceArchived   = "space_archived"
 	WaitMaxWait         = "max_wait"
 	WaitReleasedByOp    = "operator"
@@ -885,6 +886,12 @@ func resumeOutcome(err error, now time.Time) (at time.Time, reason string, cance
 	return now.Add(limitRetryFailed), WaitLaunchFailed, false
 }
 
+// resumableTask reports whether a task in this status is still carried on by a resumed run: running, and for an
+// agent-restart wait also blocked (the agent only restarted).
+func resumableTask(status, cause string) bool {
+	return status == "running" || status == "blocked" && cause == WaitCauseRestart
+}
+
 // resumeCheckTx decides, in the claim transaction, whether a wait can resume now: "" when it can, otherwise a fixed
 // reason and when to look again, or cancel when it never will.
 func (svc *Service) resumeCheckTx(ctx context.Context, tx *store.Tx, w db.LimitWait) (reason string, at time.Time, cancel bool, err error) {
@@ -911,7 +918,10 @@ func (svc *Service) resumeCheckTx(ctx context.Context, tx *store.Tx, w db.LimitW
 	}
 	if w.TaskID != "" {
 		t, err := tx.Q.GetTask(ctx, w.TaskID)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && (t.AssigneeRun != w.RunID || t.Status != "running" && t.Status != "blocked" && t.Status != "review") {
+		// Only a task still being run is carried on: one handed back (review), finished or blocked has nothing for a
+		// resumed session to do, and the resume would redo or change work that was handed back. (An agent-restart wait still
+		// carries on a blocked task: the agent only restarted.)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && (t.AssigneeRun != w.RunID || !resumableTask(t.Status, w.Cause)) {
 			return WaitTaskMoved, now, true, nil
 		} else if err != nil {
 			return "", now, false, err

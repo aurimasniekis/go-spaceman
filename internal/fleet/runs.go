@@ -689,6 +689,15 @@ func (svc *Service) StopRun(ctx context.Context, actor audit.Actor, runID, mode,
 			return err
 		}
 		nodeID = r.NodeID
+		// A run parked at its usage limit that somebody stops is not carried on: the stop gives up its wait, so neither
+		// the account switch nor the reset resumes it. (Central's own parking stop goes through stopRunTx, not here.)
+		if w, err := tx.Q.GetLimitWaitByRun(ctx, runID); err == nil && w.State == WaitWaiting {
+			if err := svc.settleWaitTx(ctx, tx, w, WaitCancelled, WaitRunStopped, actor); err != nil {
+				return err
+			}
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		if r.Observed == proto.RunExited || r.Observed == proto.RunFailed {
 			noop = true
 			return nil
