@@ -77,6 +77,14 @@ func holdLock(t *testing.T, p string) *os.File {
 	return fd
 }
 
+// releaseLock unlocks before closing, as production release() does. Close alone isn't enough: a parallel test's forked
+// child can hold a copy of fd until its exec, and the flock lives as long as any copy does; LOCK_UN drops it at once.
+func releaseLock(t *testing.T, fd *os.File) {
+	t.Helper()
+	must(t, syscall.Flock(int(fd.Fd()), syscall.LOCK_UN))
+	must(t, fd.Close())
+}
+
 func stagingSwept(t *testing.T, f *fixture) []map[string]any {
 	t.Helper()
 	rows, err := f.st.ReadDB().QueryContext(f.ctx, `SELECT details_json FROM audit_events WHERE action = 'backup.staging_swept' ORDER BY seq`)
@@ -109,7 +117,7 @@ func TestSweepStagingSkipsLockedDir(t *testing.T) {
 	if _, err := os.Lstat(live); err != nil {
 		t.Fatalf("locked staging dir removed: %v", err)
 	}
-	must(t, fd.Close())
+	releaseLock(t, fd)
 	if n, err := svc.SweepStaging(f.ctx); err != nil || n != 1 {
 		t.Fatalf("sweep after release: %d %v", n, err)
 	}
