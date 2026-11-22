@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   limit was stopped, or its task was in review, done or blocked, the account switch (or the reset) still continued it
   as a new run. Stopping a parked run now gives up its limit wait (reason `run_stopped`), and a wait whose task isn't
   running is cancelled instead of resumed (reason `task_moved`).
+- **A stop that arrived just as a parked run was being resumed is no longer lost.** Stopping a parked run in the moment
+  its resume had been claimed but not yet launched left the wait alone, and a new run started anyway. The stop now also
+  gives up a wait that is being resumed, and the launch is rolled back.
 - **A crashed backup no longer leaks its staging directory.** A backup is assembled in a hidden `.bkp_<id>.tmp-*`
   directory next to its destination. A hard kill, out-of-memory kill or reboot mid-backup left that directory
   behind, and retention never looked at it, so every crash cost a full backup's worth of disk. Central now removes
