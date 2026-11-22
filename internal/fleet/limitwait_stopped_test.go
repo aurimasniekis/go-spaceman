@@ -39,9 +39,10 @@ func TestLimitWaitSkipsRunWhoseTaskIsNotRunning(t *testing.T) {
 	}
 }
 
-// A worker whose task was already accepted as done (or failed or cancelled) when it is parked at its limit is not
-// resumed either: the wait keeps the task so that the resume check gives it up as task_moved.
-func TestLimitWaitParkedAfterTaskFinishedIsCancelled(t *testing.T) {
+// A worker whose task was already accepted as done (or failed or cancelled) when it is parked at its limit has nothing
+// to resume: its wait is given up with task_moved in the park transaction, and control is told nothing (a park message
+// would promise a resume message that never comes).
+func TestLimitWaitParkedAfterTaskFinishedIsGivenUp(t *testing.T) {
 	for _, status := range []string{"done", "failed", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
 			e := newParkEnv(t)
@@ -49,19 +50,38 @@ func TestLimitWaitParkedAfterTaskFinishedIsCancelled(t *testing.T) {
 			e.task("tsk_t", "run_t", status)
 			e.end("run_t", proto.RunExited, "exited")
 			w := e.waitOf("run_t")
-			if w.State != WaitWaiting || w.TaskID != "tsk_t" {
+			if w.State != WaitCancelled || w.LastError != WaitTaskMoved || w.TaskID != "tsk_t" {
 				t.Fatalf("wait %+v", w)
+			}
+			if len(e.events) != 0 {
+				t.Fatalf("control was told: %+v", e.events)
 			}
 			runs := e.count(`SELECT count(*) FROM runs`)
 			e.clk.Advance(time.Hour + 2*time.Minute)
 			e.due()
-			if w = e.wait(w.ID); w.State != WaitCancelled || w.LastError != WaitTaskMoved {
-				t.Fatalf("wait %+v", w)
-			}
 			if e.count(`SELECT count(*) FROM runs`) != runs {
 				t.Fatal("a run was started")
 			}
 		})
+	}
+}
+
+// A run holding several tasks is parked with the one still being worked on, even when a finished task was touched
+// later: the wait is not given up, and the running task is resumed with it.
+func TestLimitWaitParkPrefersActiveTask(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_t", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 2)
+	e.task("tsk_run", "run_t", "running")
+	e.task("tsk_old", "run_t", "done")
+	e.exec(`UPDATE tasks SET updated_at = 1 WHERE id = 'tsk_run'`)
+	e.exec(`UPDATE tasks SET updated_at = 2 WHERE id = 'tsk_old'`)
+	e.end("run_t", proto.RunExited, "exited")
+	w := e.waitOf("run_t")
+	if w.State != WaitWaiting || w.TaskID != "tsk_run" {
+		t.Fatalf("wait %+v", w)
+	}
+	if len(e.events) != 1 || e.events[0].Change != LimitWaitParked {
+		t.Fatalf("events %+v", e.events)
 	}
 }
 
