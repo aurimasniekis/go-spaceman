@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A crashed backup no longer leaks its staging directory.** A backup is assembled in a hidden `.bkp_<id>.tmp-*`
+  directory next to its destination. A hard kill, out-of-memory kill or reboot mid-backup left that directory
+  behind, and retention never looked at it, so every crash cost a full backup's worth of disk. Central now removes
+  such directories when it starts and before each backup. It only touches real directories with exactly that name
+  that are at least an hour old, never follows symlinks, and logs and audits what it removed
+  (`backup.staging_swept`).
+
 ## [0.1.18] - 2026-11-22
 
 ### Fixed

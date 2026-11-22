@@ -358,6 +358,10 @@ func (s *Service) create(base context.Context, id string, actor audit.Actor) {
 		if err := os.MkdirAll(staging, 0o700); err != nil {
 			return err
 		}
+		// The caller holds the busy claim, so no other backup of this service is staging here.
+		if _, err := s.sweepStaging(ctx); err != nil {
+			log.Warn("sweep orphaned backup staging directories", obs.Err(err))
+		}
 		src, err := OpenReadOnly(ctx, s.st.Dir())
 		if err != nil {
 			return err
@@ -628,15 +632,23 @@ func (s *Service) Prune(ctx context.Context) (int, error) {
 	return n, firstErr
 }
 
-// Recover marks runs and verifications that a restart interrupted.
+// Recover marks runs and verifications that a restart interrupted, and removes the staging directories an
+// interrupted backup left behind.
 func (s *Service) Recover(ctx context.Context) error {
-	return s.st.W().TxNamed(ctx, "backup.recover", func(tx *store.Tx) error {
+	err := s.st.W().TxNamed(ctx, "backup.recover", func(tx *store.Tx) error {
 		if _, err := tx.Q.InterruptRunningBackups(ctx, sql.NullInt64{Int64: tx.NowMicros(), Valid: true}); err != nil {
 			return err
 		}
 		_, err := tx.Q.InterruptRunningVerifications(ctx)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if _, err := s.SweepStaging(ctx); err != nil {
+		s.o.Log.Warn("sweep orphaned backup staging directories", obs.Err(err))
+	}
+	return nil
 }
 
 // nextAt is when the next scheduled backup is due: an interval after the last successful one (FirstDelay after start
