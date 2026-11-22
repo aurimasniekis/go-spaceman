@@ -913,8 +913,9 @@ func (svc *Service) resumeCheckTx(ctx context.Context, tx *store.Tx, w db.LimitW
 	if w.TaskID != "" {
 		t, err := tx.Q.GetTask(ctx, w.TaskID)
 		// Only a task still being run is carried on: one handed back (review), finished or blocked has nothing for a
-		// resumed session to do, and the resume would redo or change work that was handed back.
-		if errors.Is(err, sql.ErrNoRows) || err == nil && (t.AssigneeRun != w.RunID || t.Status != "running") {
+		// resumed session to do, and the resume would redo or change work that was handed back. (An agent-restart wait still
+		// carries on a blocked task: the agent only restarted.)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && (t.AssigneeRun != w.RunID || t.Status != "running" && !(t.Status == "blocked" && w.Cause == WaitCauseRestart)) {
 			return WaitTaskMoved, now, true, nil
 		} else if err != nil {
 			return "", now, false, err
