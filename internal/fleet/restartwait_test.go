@@ -96,6 +96,42 @@ func TestRestartResumeIsCapped(t *testing.T) {
 	}
 }
 
+// A restart wait given up at the cap leaves another wait of the instance that is still waiting alone: no wait is written
+// for it (only one may be active), but the task goes back to the queue and control is told.
+func TestRestartCapKeepsOtherWait(t *testing.T) {
+	e := newParkEnv(t)
+	e.running("run_w", "worker", "running", 1)
+	e.task("tsk_1", "run_w", "running")
+	cur := "run_w"
+	for i := 1; i <= restartMaxResumes; i++ {
+		e.end(cur, proto.RunExited, EndStoppedByRestart)
+		e.clk.Advance(10 * time.Minute)
+		if n := e.due(); n != 1 {
+			t.Fatalf("restart %d: resumed %d", i, n)
+		}
+		cur, _ = e.launchOf(e.instance("run_w"))
+	}
+	e.running("run_old", "worker", "running", 1)
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, launch_json, resume_at, created_at, updated_at)
+		VALUES ('lwt_pre', 'spc_a', 'run_old', 'worker', 'implementor', 'nod_1', ?, 'claude-code', '{}', ?, 0, 0)`, e.instance("run_w"), e.clk.Now().Add(24*time.Hour).UnixMicro())
+	e.end(cur, proto.RunExited, EndStoppedByRestart)
+	if pre := e.wait("lwt_pre"); pre.State != WaitWaiting {
+		t.Fatalf("the existing wait was displaced: %+v", pre)
+	}
+	if n := e.count(`SELECT count(*) FROM limit_waits WHERE run_id = ?`, cur); n != 0 {
+		t.Fatalf("%d waits written for the capped restart", n)
+	}
+	if e.count(`SELECT count(*) FROM tasks WHERE id = 'tsk_1' AND status = 'ready' AND assignee_run = ''`) != 1 {
+		t.Fatal("the task was not given back")
+	}
+	if ev := e.events[len(e.events)-1]; ev.Change != LimitWaitReleased || ev.Wait.LastError != WaitRestartCap || ev.Wait.RunID != cur {
+		t.Fatalf("event %+v", ev)
+	}
+	if e.count(`SELECT count(*) FROM audit_events WHERE action = 'limit_wait.restart_given_up'`) != 1 {
+		t.Fatal("the give-up was not audited")
+	}
+}
+
 // lastEnded is the run whose wait the i-th restart wrote: the run before cur in the chain, read from the waits.
 func (e *parkEnv) lastEnded(_ int, cur string) string {
 	var id string
