@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A parked run that was stopped, or whose task was handed back, is no longer resumed.** When a run parked at its usage
+  limit was stopped, or its task was in review, done or blocked, the account switch (or the reset) still continued it
+  as a new run. Stopping a parked run now gives up its limit wait (reason `run_stopped`), and a wait whose task isn't
+  running is cancelled instead of resumed (reason `task_moved`).
+
 ## [0.1.17] - 2026-11-21
 
 ### Added
