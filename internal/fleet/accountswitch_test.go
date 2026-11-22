@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics/metricstest"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -1154,5 +1155,52 @@ func TestHoldCheckClaimLostIsRefusal(t *testing.T) {
 	var he *HoldError
 	if probe || !errors.As(herr, &he) {
 		t.Fatalf("probe %v, err %v, want a hold refusal", probe, herr)
+	}
+}
+
+// A switch-cause wait whose task went to review is cancelled with task_moved, and its switch ends with it.
+func TestAccountSwitchWaitCancelledWhenTaskMoved(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_m", "worker", 2)
+	e.task("tsk_m", "run_m", "running")
+	sw := e.armAndPark("run_m")
+	w := e.waitOf("run_m")
+	if w.AccountSwitchID != sw.ID || w.State != WaitWaiting {
+		t.Fatalf("wait %+v", w)
+	}
+	e.exec(`UPDATE tasks SET status = 'review' WHERE id = 'tsk_m'`)
+	runs := e.count(`SELECT count(*) FROM runs`)
+	e.due()
+	if w = e.wait(w.ID); w.State != WaitCancelled || w.LastError != WaitTaskMoved {
+		t.Fatalf("wait %+v", w)
+	}
+	if sw = e.switchOf("run_m"); sw.State != SwitchCancelled || sw.Reason != WaitTaskMoved {
+		t.Fatalf("switch %+v", sw)
+	}
+	if e.count(`SELECT count(*) FROM runs`) != runs {
+		t.Fatal("a run was started")
+	}
+}
+
+// Stopping a run parked for a switch gives up the wait and the switch, for run_stopped.
+func TestAccountSwitchWaitCancelledWhenParkedRunStopped(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_p", "worker", 2)
+	e.task("tsk_p", "run_p", "running")
+	sw := e.armAndPark("run_p")
+	w := e.waitOf("run_p")
+	if _, err := e.svc.StopRun(e.ctx, audit.System, "run_p", "interrupt", "operator stop"); err != nil {
+		t.Fatal(err)
+	}
+	if w = e.wait(w.ID); w.State != WaitCancelled || w.LastError != WaitRunStopped {
+		t.Fatalf("wait %+v", w)
+	}
+	if sw = e.switchOf("run_p"); sw.State != SwitchCancelled || sw.Reason != WaitRunStopped {
+		t.Fatalf("switch %+v", sw)
+	}
+	runs := e.count(`SELECT count(*) FROM runs`)
+	e.due()
+	if e.count(`SELECT count(*) FROM runs`) != runs {
+		t.Fatal("a stopped run was resumed")
 	}
 }
