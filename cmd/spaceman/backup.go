@@ -95,6 +95,7 @@ func backupCreateCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer res.Close() // keeps the staging dir marked live through the upload
 			if target.Kind() != "local" {
 				defer func() { _ = os.RemoveAll(dest) }()
 			}

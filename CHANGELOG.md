@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - **A stop that arrived just as a parked run was being resumed is no longer lost.** Stopping a parked run in the moment
   its resume had been claimed but not yet launched left the wait alone, and a new run started anyway. The stop now also
   gives up a wait that is being resumed, and the launch is rolled back.
+- **A crashed backup no longer leaks its staging directory.** A backup is assembled in a hidden `.bkp_<id>.tmp-*`
+  directory next to its destination. A hard kill, out-of-memory kill or reboot mid-backup left that directory
+  behind, and retention never looked at it, so every crash cost a full backup's worth of disk. Central now removes
+  such directories when it starts and before each backup. It only touches real directories with exactly that name
+  that are at least an hour old, never follows symlinks, and logs and audits what it removed
+  (`backup.staging_swept`). A directory that a running backup still holds (including one written by
+  `spaceman backup create` in another process) is skipped, however old: each backup keeps a lock on its staging
+  directory until it is stored. On S3 targets the same sweep also covers the leftovers of an upload that crashed.
 
 ## [0.1.18] - 2026-11-22
 

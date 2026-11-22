@@ -291,6 +291,16 @@ type Options struct {
 type Result struct {
 	Dir      string
 	Manifest *Manifest
+	lock     *stageLock
+}
+
+// Close releases the lock that marks the backup's staging directory as in use (see SweepStaging). Hold the Result
+// until the backup has been stored, e.g. uploaded to a remote target, then close it. Closing twice is fine, and a
+// Result that is dropped releases the lock when it is garbage collected or the process ends.
+func (r *Result) Close() {
+	if r != nil {
+		r.lock.release()
+	}
 }
 
 var reBackupID = regexp.MustCompile(`^bkp_[0-9a-z]{26}$`)
@@ -328,10 +338,18 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 	if err != nil {
 		return nil, fmt.Errorf("create backup staging dir: %w", err)
 	}
+	// Mark the directory as live for the whole backup; the sweep skips a directory it cannot lock. The window between
+	// MkdirTemp and the lock is covered by the sweep's age check.
+	lock, _, err := lockStageDir(tmp, true)
+	if err != nil {
+		_ = os.RemoveAll(tmp)
+		return nil, fmt.Errorf("lock backup staging dir: %w", err)
+	}
 	ok := false
 	defer func() {
 		if !ok {
 			_ = os.RemoveAll(tmp)
+			lock.release()
 		}
 	}()
 	if err := os.Chmod(tmp, 0o700); err != nil { //nolint:gosec // G302: a directory needs the search bit; owner only
@@ -391,9 +409,10 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 	}
 	ok = true
 	if err := store.FsyncDir(parent); err != nil {
+		lock.release()
 		return nil, err
 	}
-	return &Result{Dir: dest, Manifest: b.m}, nil
+	return &Result{Dir: dest, Manifest: b.m, lock: lock}, nil
 }
 
 type builder struct {
