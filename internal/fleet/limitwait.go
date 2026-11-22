@@ -393,11 +393,12 @@ func assignedTaskOf(ctx context.Context, tx *store.Tx, runID string) (string, er
 	return id, err
 }
 
-// activeTaskOf returns the task assigned to a run that is still being worked on (running, blocked or in review), or "".
+// activeTaskOf returns the task assigned to a run that is still being worked on (running, blocked or in review), or "". A running task wins over a blocked
+// one, and that over one in review, whatever was updated last.
 func activeTaskOf(ctx context.Context, tx *store.Tx, runID string) (string, error) {
 	var id string
 	err := tx.SQL.QueryRowContext(ctx, `SELECT id FROM tasks WHERE assignee_run = ? AND status IN ('running', 'blocked', 'review')
-		ORDER BY updated_at DESC, id LIMIT 1`, runID).Scan(&id)
+		ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END, updated_at DESC, id LIMIT 1`, runID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

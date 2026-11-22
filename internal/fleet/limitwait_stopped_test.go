@@ -85,6 +85,31 @@ func TestLimitWaitParkPrefersActiveTask(t *testing.T) {
 	}
 }
 
+// Of several tasks being worked on, the running one wins over a later-updated task in review: the run is parked with
+// it and the wait resumes.
+func TestLimitWaitParkPrefersRunningOverReviewTask(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_t", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 2)
+	e.task("tsk_run", "run_t", "running")
+	e.task("tsk_rev", "run_t", "review")
+	e.exec(`UPDATE tasks SET updated_at = 1 WHERE id = 'tsk_run'`)
+	e.exec(`UPDATE tasks SET updated_at = 2 WHERE id = 'tsk_rev'`)
+	e.end("run_t", proto.RunExited, "exited")
+	w := e.waitOf("run_t")
+	if w.State != WaitWaiting || w.TaskID != "tsk_run" {
+		t.Fatalf("wait %+v", w)
+	}
+	runs := e.count(`SELECT count(*) FROM runs`)
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.due()
+	if w = e.wait(w.ID); w.State == WaitCancelled {
+		t.Fatalf("wait given up: %+v", w)
+	}
+	if e.count(`SELECT count(*) FROM runs`) <= runs {
+		t.Fatal("the run was not resumed")
+	}
+}
+
 // Somebody stopping a parked run (control's worker_stop) gives up its wait: neither the reset nor an account switch
 // continues it afterwards.
 func TestLimitWaitCancelledWhenParkedRunStopped(t *testing.T) {
