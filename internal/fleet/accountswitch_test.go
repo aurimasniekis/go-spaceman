@@ -1204,3 +1204,36 @@ func TestAccountSwitchWaitCancelledWhenParkedRunStopped(t *testing.T) {
 		t.Fatal("a stopped run was resumed")
 	}
 }
+
+// A switch whose run's task is already finished is given up when the run is parked, and the instance's other wait stays:
+// the run is stopped with a neutral message that doesn't promise it continues anywhere.
+func TestAccountSwitchParkFinishedTaskKeepsOtherWait(t *testing.T) {
+	e := newSwitchEnv(t)
+	e.running("run_old", "worker", 2)
+	e.inst["run_w"] = e.instance("run_old") // the same instance
+	e.running("run_w", "worker", 2)
+	e.task("tsk_done", "run_w", "done")
+	e.exec(`INSERT INTO limit_waits (id, space_id, run_id, run_kind, role, node_id, instance_id, harness, launch_json, resume_at, created_at, updated_at)
+		VALUES ('lwt_pre', 'spc_a', 'run_old', 'worker', 'implementor', 'nod_1', ?, 'claude-code', '{}', ?, 0, 0)`, e.instance("run_old"), e.clk.Now().Add(24*time.Hour).UnixMicro())
+	e.report("run_w", "working", 2, e.limit(proto.LimitFiveHour, dur(3*time.Hour)))
+	e.report("run_w", "idle", 2, nil)
+	if pre := e.wait("lwt_pre"); pre.State != WaitWaiting {
+		t.Fatalf("the existing wait was displaced: %+v", pre)
+	}
+	if n := e.count(`SELECT count(*) FROM limit_waits WHERE run_id = 'run_w'`); n != 0 {
+		t.Fatalf("%d waits written for the given-up park", n)
+	}
+	if sw := e.switchOf("run_w"); sw.State != SwitchCancelled || sw.Reason != WaitTaskMoved {
+		t.Fatalf("switch %+v", sw)
+	}
+	if r := e.observed("run_w"); r.Desired != "stopped" {
+		t.Fatal("the run was not stopped")
+	}
+	var payload string
+	if err := e.s.ReadDB().QueryRowContext(e.ctx, `SELECT payload_json FROM node_commands WHERE run_id = 'run_w' AND kind = ?`, proto.CmdStop).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, "continues there") || !strings.Contains(payload, "already finished") {
+		t.Fatalf("stop payload %s", payload)
+	}
+}

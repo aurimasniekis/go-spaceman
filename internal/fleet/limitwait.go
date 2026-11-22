@@ -240,12 +240,33 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if old, err := tx.Q.GetActiveLimitWait(ctx, db.GetActiveLimitWaitParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID}); err == nil {
+	// Decide whether the run's task is finished before touching the instance's other wait: a wait that is given up
+	// at once must not displace one that still waits.
+	taskID, finished, err := parkTaskOf(ctx, tx, r)
+	if err != nil {
+		return nil, err
+	}
+	old, err := tx.Q.GetActiveLimitWait(ctx, db.GetActiveLimitWaitParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID})
+	hasOld := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if finished && hasOld {
+		// Only one wait per instance may be active, so the given-up wait is not written; the existing one stays. The
+		// caller sees a cancelled wait. A switch of the run ends with it. Control is told nothing (and the pool
+		// notice is dropped with the park message it would ride on): no wait is left to promise a resume.
+		if sw != nil {
+			if _, _, err := svc.moveSwitchTx(ctx, tx, *sw, SwitchCancelled, WaitTaskMoved, nil); err != nil {
+				return nil, err
+			}
+		}
+		return &db.LimitWait{SpaceID: r.SpaceID, RunID: r.ID, RunKind: r.Kind, InstanceID: r.InstanceID, TaskID: taskID,
+			State: WaitCancelled, LastError: WaitTaskMoved}, nil
+	}
+	if hasOld {
 		if err := svc.settleWaitTx(ctx, tx, old, WaitCancelled, WaitSuperseded, LimitWaitActor); err != nil {
 			return nil, err
 		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
 	}
 	ul := svc.ulSettings(ctx, tx.Q, r.SpaceID)
 	now := tx.Now
@@ -274,29 +295,11 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	case !errors.Is(err, sql.ErrNoRows):
 		return nil, err
 	}
-	finished := false // the run's task is already done, failed or cancelled
 	if r.Kind != "control" {
 		if !w.ReleaseAt.Valid {
 			w.ReleaseAt = sql.NullInt64{Int64: now.Add(ul.MaxWait).UnixMicro(), Valid: true}
 		}
-		// The task still being worked on wins over a finished one that was touched later. With none active, the wait
-		// records the assigned task: if it is finished, the wait is given up below as task_moved instead of resuming a
-		// worker that has nothing to do.
-		if w.TaskID, err = activeTaskOf(ctx, tx, r.ID); err != nil {
-			return nil, err
-		}
-		if w.TaskID == "" {
-			if w.TaskID, err = assignedTaskOf(ctx, tx, r.ID); err != nil {
-				return nil, err
-			}
-			if w.TaskID != "" {
-				t, err := tx.Q.GetTask(ctx, w.TaskID)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return nil, err
-				}
-				finished = err == nil && (t.Status == "done" || t.Status == "failed" || t.Status == "cancelled")
-			}
-		}
+		w.TaskID = taskID
 	}
 	if r.Turn > 0 {
 		w.SessionID = r.SessionID // a session that never finished a turn has nothing to resume
@@ -382,6 +385,30 @@ func (svc *Service) parkWithTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	}
 	tx.AfterCommit(svc.wakeDeadlines)
 	return &w, nil
+}
+
+// parkGivenUpStop is the stop message of a run whose park was given up because its task is finished.
+const parkGivenUpStop = "SpaceMan stops the run at its usage limit; its task is already finished, so it is not resumed"
+
+// parkTaskOf is the task a wait for run r records, and whether it is finished. The task still being worked on wins over
+// a finished one that was touched later. With none active, the assigned task is recorded: if it is done, failed or
+// cancelled the wait is given up as task_moved instead of resuming a worker that has nothing to do. A control run
+// carries no task.
+func parkTaskOf(ctx context.Context, tx *store.Tx, r db.Run) (id string, finished bool, err error) {
+	if r.Kind == "control" {
+		return "", false, nil
+	}
+	if id, err = activeTaskOf(ctx, tx, r.ID); err != nil || id != "" {
+		return id, false, err
+	}
+	if id, err = assignedTaskOf(ctx, tx, r.ID); err != nil || id == "" {
+		return id, false, err
+	}
+	t, err := tx.Q.GetTask(ctx, id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	return id, err == nil && (t.Status == "done" || t.Status == "failed" || t.Status == "cancelled"), nil
 }
 
 // assignedTaskOf returns the task assigned to a run in any status, or "".
@@ -785,7 +812,11 @@ func (svc *Service) parkDueRuns(ctx context.Context, now time.Time) (int, error)
 			if err != nil || w == nil {
 				return err
 			}
-			if err := svc.stopRunTx(ctx, tx, cur, "interrupt", "SpaceMan parks the run at its usage limit; it resumes at the reset"); err != nil {
+			msg := "SpaceMan parks the run at its usage limit; it resumes at the reset"
+			if w.State == WaitCancelled {
+				msg = parkGivenUpStop // its task is finished: nothing resumes
+			}
+			if err := svc.stopRunTx(ctx, tx, cur, "interrupt", msg); err != nil {
 				return err
 			}
 			parked = true
