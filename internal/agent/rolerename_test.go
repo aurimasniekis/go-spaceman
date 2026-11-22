@@ -667,11 +667,30 @@ func TestRoleRenameLateCheckpointWritesNothing(t *testing.T) {
 
 // The hello advertises the minor this agent implements, not whatever proto.MaxMinor becomes after a later central-side bump.
 func TestAgentMaxMinorPinned(t *testing.T) {
-	if agentMaxMinor != proto.MinorDialog {
-		t.Fatalf("agentMaxMinor %d, want %d (raise it with the code that speaks the new minor, never set it to proto.MaxMinor)", agentMaxMinor, proto.MinorDialog)
+	if agentMaxMinor != proto.MinorWorktreeRemove {
+		t.Fatalf("agentMaxMinor %d, want %d (raise it with the code that speaks the new minor, never set it to proto.MaxMinor)", agentMaxMinor, proto.MinorWorktreeRemove)
 	}
 	if agentMaxMinor > proto.MaxMinor {
 		t.Fatalf("agentMaxMinor %d above proto.MaxMinor %d", agentMaxMinor, proto.MaxMinor)
+	}
+}
+
+// centralOnlyMinors lists protocol minors above agentMaxMinor that central speaks and this agent deliberately does not.
+// Add a minor here, with the reason, only when the agent has no work for it; otherwise raise agentMaxMinor with the code.
+// An empty list is the norm: a central bump without the agent bump (the 0.1.17 worktree-removal outage) must fail here.
+var centralOnlyMinors = map[int]string{}
+
+// Every minor central accepts is either advertised by the agent or explicitly declared central-only.
+func TestAgentMaxMinorCoversCentralMinors(t *testing.T) {
+	for m := agentMaxMinor + 1; m <= proto.MaxMinor; m++ {
+		if _, ok := centralOnlyMinors[m]; !ok {
+			t.Errorf("proto.MaxMinor is %d but agentMaxMinor is %d: minor %d is neither advertised nor listed in centralOnlyMinors", proto.MaxMinor, agentMaxMinor, m)
+		}
+	}
+	for m := range centralOnlyMinors {
+		if m <= agentMaxMinor || m > proto.MaxMinor {
+			t.Errorf("centralOnlyMinors lists %d, outside (agentMaxMinor %d, proto.MaxMinor %d]", m, agentMaxMinor, proto.MaxMinor)
+		}
 	}
 }
 

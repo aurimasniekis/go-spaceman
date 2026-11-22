@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Worktree removal was refused on every 0.1.17 node.** The agent advertised protocol minor 15 although it implements
+  16, so `spaceman_worktree_remove`, `spaceman_worktrees_prune` and automatic retention failed with "node speaks node
+  protocol 1.15; removing a worktree needs 1.16". The agent now advertises 16, and a test fails when the protocol
+  minor rises without the agent's advertised minor (or an explicit central-only entry).
+
 ## [0.1.17] - 2026-11-21
 
 ### Added
