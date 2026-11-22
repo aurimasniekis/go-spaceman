@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the same instance that is still waiting, and when the run is stopped for it (an account switch, a switch back or the
   keep-alive limit) the stop message says its task is finished and that the run is not resumed, instead of promising
   that it continues or resumes. The keep-alive limit audits such a give-up that writes no wait
-  (`limit_wait.park_given_up`), and a restart whose resume is given up is audited as `limit_wait.restart_given_up`. A
+  (`limit_wait.park_given_up`), and a capped restart that writes no wait is audited as `limit_wait.restart_given_up`. A
   run stopped by an agent restart too often no longer displaces another wait of the same instance when its resume is
   given up: the task still goes back to the queue and control is told.
 - **A stop that arrived just as a parked run was being resumed is no longer lost.** Stopping a parked run in the moment
