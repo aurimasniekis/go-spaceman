@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-11-22
+
 ### Fixed
 
 - **A parked run that was stopped, or whose task was handed back, is no longer resumed.** When a run parked at its usage
@@ -2742,7 +2744,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.18...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.19...HEAD
+[0.1.19]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.15...v0.1.16
