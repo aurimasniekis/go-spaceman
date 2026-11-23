@@ -3,6 +3,7 @@ package dialog
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -275,5 +276,96 @@ func TestThemePickerPreviewMustBeClosedAndHintFollowsIt(t *testing.T) {
 	hinted := theme[:at+1] + "\n  Syntax theme: Monokai Extended (ctrl+t to disable)\n"
 	if r := Classify(hinted, c); r.Kind != None || len(r.Keys) != 0 {
 		t.Fatalf("a hint without a preview box: %+v", r)
+	}
+}
+
+// managed is the managed-settings telemetry approval fixture (2.1.323) and the endpoint it names.
+const (
+	managedFixture  = "claude-2.1.323-managed-settings-telemetry.txt"
+	managedEndpoint = "https://telemetry.example.com/prod"
+)
+
+func trusting(v string, endpoints ...string) Context {
+	c := claude(v)
+	c.TelemetryEndpoints = endpoints
+	return c
+}
+
+// The managed-settings telemetry approval is answered only for a trusted destination, only when the dialog is about
+// telemetry destinations and nothing else, and only from the version it was seen in (ADR-0108).
+func TestManagedSettingsTelemetry(t *testing.T) {
+	base := screen(t, managedFixture)
+	const dest = "   · OTEL_EXPORTER_OTLP_ENDPOINT=" + managedEndpoint + "\n"
+	const applies1 = " Approving applies: env var ×1 — this redirects where telemetry from this machine is sent.\n"
+	const applies2 = " Approving applies: env vars ×2 — this redirects where telemetry from this machine is sent.\n"
+	logsDest := "   · OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example.com/v1\n"
+	edit := func(pairs ...string) string { return strings.NewReplacer(pairs...).Replace(base) }
+	const id = "claude.managed_settings_telemetry"
+	for _, tc := range []struct {
+		name   string
+		s      string
+		c      Context
+		kind   Kind
+		id     string
+		signal string
+		keys   []string
+	}{
+		{"trusted endpoint", base, trusting("2.1.323", managedEndpoint), Known, id, SignalKnown, []string{"enter"}},
+		{"trusted, newer version", base, trusting("2.1.330", "https://other.example.com", managedEndpoint), Known, id, SignalKnown, []string{"enter"}},
+		{"cursor on No", edit("❯ 1. Yes", "  1. Yes", "  2. No, exit", "❯ 2. No, exit"), trusting("2.1.323", managedEndpoint), Known, id, SignalKnown, []string{"up", "enter"}},
+		{"nothing trusted", base, claude("2.1.323"), Unknown, id, SignalDeclined, nil},
+		{"another endpoint trusted", base, trusting("2.1.323", "https://telemetry.example.com"), Unknown, id, SignalDeclined, nil},
+		{"older than seen", base, trusting("2.1.300", managedEndpoint), Unknown, UnknownID, SignalNever, nil},
+		{"other harness", base, Context{Harness: "codex", Version: "2.1.323", TelemetryEndpoints: []string{managedEndpoint}}, Unknown, UnknownID, SignalNever, nil},
+		{"two trusted destinations", edit(dest, dest+logsDest, applies1, applies2), trusting("2.1.323", managedEndpoint, "https://logs.example.com/v1"), Known, id, SignalKnown, []string{"enter"}},
+		{"one of two untrusted", edit(dest, dest+logsDest, applies1, applies2), trusting("2.1.323", managedEndpoint), Unknown, id, SignalDeclined, nil},
+		{"count does not match", edit(dest, dest+logsDest), trusting("2.1.323", managedEndpoint, "https://logs.example.com/v1"), Unknown, id, SignalDeclined, nil},
+		{"headers too", edit(dest, dest+"   · OTEL_EXPORTER_OTLP_HEADERS=x-team=a\n", applies1, applies2), trusting("2.1.323", managedEndpoint), Unknown, id, SignalDeclined, nil},
+		{"not an endpoint variable", edit("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_RESOURCE_ATTRIBUTES"), trusting("2.1.323", managedEndpoint), Unknown, id, SignalDeclined, nil},
+		{"hooks in the summary", edit("env var ×1 —", "env var ×1, hooks ×1 —"), trusting("2.1.323", managedEndpoint), Unknown, UnknownID, SignalNever, nil},
+		{"another section", edit(applies1, applies1+"\n Hooks:\n   · PreToolUse: curl https://example.com\n"), trusting("2.1.323", managedEndpoint), Unknown, id, SignalDeclined, nil},
+		{"another listed word", edit("content of your prompts", "content of your prompts, tokens"), trusting("2.1.323", managedEndpoint), Unknown, UnknownID, SignalNever, nil},
+		{"wrapped destination", edit("https://telemetry.example.com/prod", "https://telemetry.exa\n     mple.com/prod"), trusting("2.1.323", managedEndpoint), Known, id, SignalKnown, []string{"enter"}},
+		{"another option", edit("   2. No, exit Claude Code\n", "   2. No, exit Claude Code\n   3. Yes, and trust everything\n"), trusting("2.1.323", managedEndpoint), Unknown, UnknownID, SignalNever, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Classify(tc.s, tc.c)
+			if r.Kind != tc.kind || r.ID != tc.id || r.Signal != tc.signal || !slices.Equal(r.Keys, tc.keys) {
+				t.Fatalf("got kind %d id %q signal %q keys %v, want %d %q %q %v", r.Kind, r.ID, r.Signal, r.Keys, tc.kind, tc.id, tc.signal, tc.keys)
+			}
+			if r.Kind == Known && r.Answer != "yes" {
+				t.Fatalf("answer %q", r.Answer)
+			}
+		})
+	}
+	// The dialog's text above the program's prompt (a transcript quoting it) is not a dialog.
+	if r := Classify("⏺ It asked:\n\n"+base+"\n⏺ Done.\n\n"+promptBox, trusting("2.1.323", managedEndpoint)); r.Kind != None {
+		t.Fatalf("quoted in the transcript: %+v", r)
+	}
+}
+
+// NeverExempt sets aside only its exact lines: the same words anywhere else keep the dialog on the never-answer list,
+// and an entry without NeverExempt never gets past it.
+func TestNeverExemptIsExactLines(t *testing.T) {
+	s := "────────────────────────────────────────\n Approval needed\n Pick one\n ❯ 1. Yes\n   2. No\n\n Enter to confirm · Esc to exit\n"
+	yes := func(d Dialog, _ Context) (Answer, bool) {
+		k, ok := d.Select("Yes")
+		return Answer{Choice: "yes", Keys: k}, ok
+	}
+	exempt := []Entry{{ID: "test.exempt", Harness: "claude-code", Text: []string{"Approval needed"},
+		NeverExempt: []*regexp.Regexp{regexp.MustCompile("Approval needed")}, Answer: yes}}
+	if r := classify(exempt, s, claude("2.1.328")); r.Kind != Known {
+		t.Fatalf("exempt title: %+v", r)
+	}
+	if r := classify(exempt, strings.Replace(s, " Pick one", " Pick one (approval required)", 1), claude("2.1.328")); r.Kind != Unknown || r.Signal != SignalNever {
+		t.Fatalf("a second listed word: %+v", r)
+	}
+	exempt[0].NeverExempt = []*regexp.Regexp{regexp.MustCompile("Approval")}
+	if r := classify(exempt, s, claude("2.1.328")); r.Kind != Unknown || r.Signal != SignalNever {
+		t.Fatalf("a partial line is not exempt: %+v", r)
+	}
+	exempt[0].NeverExempt = nil
+	if r := classify(exempt, s, claude("2.1.328")); r.Kind != Unknown || r.Signal != SignalNever {
+		t.Fatalf("no exemption: %+v", r)
 	}
 }

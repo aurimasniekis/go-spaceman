@@ -1,5 +1,7 @@
 package dialog
 
+import "regexp"
+
 // CodeModeEnv is the settings env variable that turns Claude Code's experimental Code Mode on: a session started with
 // it asks the "Code Mode (experimental)" opt-in question (docs/contracts/harnesses.md).
 const CodeModeEnv = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
@@ -54,6 +56,24 @@ var Registry = []Entry{
 			}
 			keys, ok := d.Select("No, start without it")
 			return Answer{Choice: "no", Keys: keys}, ok
+		},
+	},
+	{
+		// "Managed settings require approval" for an organisation's server-managed settings that only redirect
+		// telemetry (ADR-0108, managed.go). Accepted only when every destination it names is one the node's operator
+		// trusts (harness.claude.trusted_telemetry_endpoints) and the dialog holds nothing but telemetry destinations;
+		// otherwise it is flagged. Two of its lines are on the never-answer list ("approval", "Approving"): its title and
+		// the telemetry-only summary line are exempt in full, and any other listed word on the dialog still flags it.
+		ID: "claude.managed_settings_telemetry", Harness: "claude-code", MinVersion: "2.1.323",
+		Text:        []string{managedTitle, managedOnly},
+		Options:     []string{managedYes, managedNo},
+		NeverExempt: []*regexp.Regexp{regexp.MustCompile(regexp.QuoteMeta(managedTitle)), reApplies},
+		Answer: func(d Dialog, c Context) (Answer, bool) {
+			if !c.trustsTelemetry(d) {
+				return Answer{}, false
+			}
+			keys, ok := d.Select(managedYes)
+			return Answer{Choice: "yes", Keys: keys}, ok
 		},
 	},
 }

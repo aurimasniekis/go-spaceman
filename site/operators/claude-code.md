@@ -168,6 +168,28 @@ step: building the launch, writing its files (settings, skills, login, secrets) 
 process can already change much else the node runs, so the cache is no boundary against it. Re-hashing every launch
 would not close that gap either, and it would cost a 340 MB read per run.
 
+## Organisation telemetry settings
+
+If your Claude Code accounts belong to a Team or Enterprise organisation whose administrators push server-managed
+settings that send telemetry to their own collector, a run logged in with a `claude setup-token` token stops at
+**Managed settings require approval** every time a new instance starts. The node flags it `blocked_on_dialog`, because
+it never accepts a setting on its own.
+
+If you recognise the collector, list it in the agent configuration:
+
+```yaml
+harness:
+  claude:
+    trusted_telemetry_endpoints:
+      - https://collector.example.com/prod   # exactly as the dialog shows it
+```
+
+The node then chooses **Yes, I trust these settings** when the dialog is about telemetry destinations and nothing else,
+and every destination it names is on the list. A dialog that names another destination, or asks about hooks, commands
+or other settings, still flags the run. The list applies to runs launched after the agent restarts with it. Your
+organisation's settings may send prompts and responses to that collector: list it only if that is what you and your
+organisation intend (ADR-0108).
+
 ## Verified
 
 - **Simulated** (`internal/agent`, `internal/harness/dist`, run on every check): an `httptest` fake release server and

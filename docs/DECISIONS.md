@@ -8481,6 +8481,65 @@
   person or control pushes or discards that work deliberately. Every launch now writes one small file in its run
   directory.
 
+### ADR-0108 — Answer Claude Code's managed-settings telemetry approval for an operator-trusted collector (security-relevant change)
+
+- **Status:** Accepted, 2026-11-23 (unreleased). **Security-relevant change:** it lets one registry entry get past
+  ADR-0102's never-answer list, and lets the node accept an organisation's server-managed settings on a run's behalf.
+  No protocol or migration change: the trusted list travels in the run's saved launch facts (`dialog.json`).
+- **Context:** an organisation (Team or Enterprise) can push server-managed settings to Claude Code. Settings that
+  redirect telemetry (`OTEL_EXPORTER_OTLP_ENDPOINT` and the other OTLP endpoint variables) need approval: Claude Code
+  stops at "Managed settings require approval … Telemetry destination: · OTEL_EXPORTER_OTLP_ENDPOINT=<url> … Approving
+  applies: env var ×1 — this redirects where telemetry from this machine is sent" with "1. Yes, I trust these settings"
+  and "2. No, exit Claude Code" (seen on 2.1.323, screen captured from a live run; fixture
+  `internal/dialog/testdata/claude-2.1.323-managed-settings-telemetry.txt` with the URL replaced). With a full claude.ai
+  login of a Team organisation the same settings apply without the dialog (its changelog: "settings fetched from
+  Anthropic's API now apply without an approval prompt" for Team and Enterprise logins); with a `claude setup-token`
+  token, the only Claude login kind SpaceMan has, there is no account profile in the config dir and the dialog appears
+  at every session start of a new instance (the binary keeps the approval for the session only:
+  `isRemoteManagedSettingsVerifiedAndApprovedForSession`). Its title and summary contain "approval"/"Approving", which
+  are on ADR-0102's never-answer list, so every new worker of such an organisation was flagged `blocked_on_dialog` until
+  a person took over its terminal. Observed, not documented: a config dir that already holds an approved
+  `remote-settings.json` starts without the dialog; that is not relied on.
+- **Decision:**
+  1. **Operator setting.** `harness.claude.trusted_telemetry_endpoints` on the node: at most 10 https URLs without
+     credentials, query or fragment. Empty (the default) keeps the dialog flagged, as before.
+  2. **Launch facts.** The list is saved in the run's `dialog.json` at launch (`telemetry_endpoints`), like Code Mode:
+     a later configuration change or an agent restart does not change what a running run's dialog may be answered with.
+  3. **Registry entry** `claude.managed_settings_telemetry` (≥ 2.1.323): the title "Managed settings require approval"
+     and "Only accept if you recognize this as your organization's telemetry collector." on the dialog, and exactly the
+     two options above. It answers "Yes, I trust these settings" (by name) only when the dialog is telemetry-only and
+     every destination is trusted: every line of the dialog is one of its known parts (title, the intro paragraph that
+     starts "Your organization has configured Claude Code to send telemetry to the destination", the "Telemetry
+     destination(s):" list, the "Only accept …" line, the summary, its two options and footer); every destination is
+     `OTEL_EXPORTER_OTLP[_TRACES|_METRICS|_LOGS]_ENDPOINT=<url>` with the URL exactly on the list (a wrapped URL is
+     joined); the summary is exactly "Approving applies: env var(s) ×N — this redirects where telemetry from this
+     machine is sent." with N the number of destinations. Anything else (another section, hooks or other settings in
+     the summary, a headers or attributes variable, an untrusted URL) declines, and the run is flagged as before.
+  4. **Never-list exemption, by whole lines.** A registry entry may name full-line patterns of its own text
+     (`Entry.NeverExempt`). Only when that entry matches the dialog in full (text, option set, version) is the
+     never-answer list checked again without the lines those patterns match entirely; any other listed word on the
+     dialog still flags it with `never_list`. This entry exempts exactly its title and the strict summary line above;
+     a summary that also mentions hooks is not exempt and keeps the dialog on the never-answer list. No other entry has
+     an exemption.
+  5. Everything else of ADR-0102 holds: the dialog is answered only before the program reports a status, once, with
+     named keys; it is recorded as `answered` with the entry's ID and the answer `yes`.
+- **Alternatives rejected:**
+  - Seeding an approved `remote-settings.json` into each new instance: it works in a test, but relies on how Claude Code
+    caches the file, which is not documented, and would keep a copy of the organisation's settings (an `Authorization`
+    header among them) in every instance.
+  - A node-wide managed-settings file with the same env (`/etc/claude-code/managed-settings.json`): tested, the dialog
+    still appears for the server-managed copy.
+  - Undocumented variables that point Claude Code at another remote-settings file: they would get around the
+    organisation's control instead of answering it.
+  - A full claude.ai login account kind: the login refreshes itself, so it can't be shared between runs (the same
+    problem as Codex's ChatGPT login, ADR-0053), and it is much larger.
+- **Consequences:** A node whose operator lists their organisation's collector starts new Claude Code instances without
+  a person. The operator is trusting that destination for every run on the node, including prompts and responses when
+  the organisation's settings send them (`OTEL_LOG_USER_PROMPTS`); the run's own settings can't add to the list. A
+  changed or added destination, or any other managed setting that needs approval, still stops the run for a person.
+  The entry depends on Claude Code's screen text, so a version that rewords the dialog makes it flag again until the
+  entry is updated (the safe direction).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

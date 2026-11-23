@@ -405,6 +405,16 @@ func (v *validator) claudeCode(c ClaudeCodeConfig) {
 	if c.Manage && c.SelfUpdate {
 		v.add("harness.claude.self_update can't be on with harness.claude.manage: managed runs never update themselves")
 	}
+	if n := len(c.TrustedTelemetryEndpoints); n > 10 {
+		v.add("harness.claude.trusted_telemetry_endpoints holds at most 10 URLs, got %d", n)
+	}
+	for _, raw := range c.TrustedTelemetryEndpoints {
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+			u.Fragment != "" || strings.ContainsAny(raw, " \t\r\n") {
+			v.add("harness.claude.trusted_telemetry_endpoints: %q must be an https URL without credentials, query or fragment", raw)
+		}
+	}
 }
 
 // protectedPassthroughPrefixes and protectedPassthroughNames are variables harness.env_passthrough refuses: the ones

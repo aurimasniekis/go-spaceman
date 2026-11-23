@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **A node can answer Claude Code's managed-settings telemetry approval for a collector its operator trusts.** With a
+  `claude setup-token` login, an organisation's server-managed settings that redirect telemetry stop every new run at
+  "Managed settings require approval". List the organisation's collector in the agent's
+  `harness.claude.trusted_telemetry_endpoints`, and the node answers "Yes, I trust these settings" when the dialog is
+  about telemetry destinations only and names nothing but listed URLs; anything else still flags the run
+  `blocked_on_dialog` (ADR-0108).
+
 ## [0.1.19] - 2026-11-22
 
 ### Fixed

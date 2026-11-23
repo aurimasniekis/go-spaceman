@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -90,7 +91,8 @@ func httpClient(cfg *config.AgentConfig) (*http.Client, error) {
 // (ADR-0077).
 func claudeOptions(cfg *config.AgentConfig, log *slog.Logger) (agent.ClaudeOptions, error) {
 	cc := cfg.Harness.Claude
-	o := agent.ClaudeOptions{Channel: cc.Channel, DownloadTimeout: cc.DownloadTimeout.D(), KeepPinned: cc.CacheKeepPinned, SelfUpdate: cc.SelfUpdate}
+	o := agent.ClaudeOptions{Channel: cc.Channel, DownloadTimeout: cc.DownloadTimeout.D(), KeepPinned: cc.CacheKeepPinned, SelfUpdate: cc.SelfUpdate,
+		TrustedTelemetryEndpoints: slices.Clone(cc.TrustedTelemetryEndpoints)}
 	if !cc.Manage {
 		return o, nil
 	}

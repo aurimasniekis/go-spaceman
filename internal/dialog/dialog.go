@@ -9,7 +9,9 @@
 //     elsewhere on the screen (a transcript, a quoted file, typed text in the prompt box) is not a dialog. The plain
 //     prompt of a waiting program ("❯ " with or without typed text) is not a dialog.
 //  2. The never-answer list, over the dialog's own lines: permission and tool approval, login and credentials. Such a
-//     dialog is flagged, never answered, whatever the registry says.
+//     dialog is flagged, never answered, whatever the registry says. The one exception (ADR-0108): an entry may name
+//     whole lines of its own stable text that are on the list (NeverExempt); a dialog it matches in full is checked
+//     again without exactly those lines, and is answered by it only when nothing else is on the list.
 //  3. The registry: an entry for the harness and version whose stable text is all on the dialog's lines. Its answer
 //     may still decline (a directory SpaceMan did not provision), and then the dialog is flagged.
 //  4. Anything else that looks like a dialog is unknown: flagged, never guessed.
@@ -71,6 +73,10 @@ type Context struct {
 	Home string
 	// CodeMode says the run's profile turned Claude Code's Code Mode on (its settings env sets the variable).
 	CodeMode bool
+	// TelemetryEndpoints are the telemetry collector URLs the node's operator trusts
+	// (harness.claude.trusted_telemetry_endpoints, ADR-0108): the only destinations a managed-settings telemetry approval
+	// may be accepted for. Compared exactly.
+	TelemetryEndpoints []string
 }
 
 // Result is a classification.
@@ -112,6 +118,11 @@ type Entry struct {
 	Options []string
 	// Answer decides the keys for this screen; ok false declines (the dialog is then flagged).
 	Answer func(d Dialog, c Context) (a Answer, ok bool)
+	// NeverExempt are whole lines of the entry's own text that are on the never-answer list (ADR-0108), as patterns that
+	// must match an entire line (after trimming and collapsing spaces). When the entry matches, the never-answer list is
+	// checked again over the dialog's lines without the lines these match in full: any other line on the list still
+	// flags the dialog. Empty for every entry the never-answer list must fully cover.
+	NeverExempt []*regexp.Regexp
 }
 
 // Dialog is a recognised dialog on a screen: its lines, the option lines and where the cursor is.
@@ -331,16 +342,7 @@ func classify(reg []Entry, screen string, c Context) Result {
 	unknown := func(id, signal string) Result {
 		return Result{Kind: Unknown, ID: id, Signal: signal, Lines: d.Lines}
 	}
-	if Never(d.Lines) {
-		if d.Weak {
-			return Result{Kind: None}
-		}
-		return unknown(UnknownID, SignalNever)
-	}
-	for _, e := range reg {
-		if !e.matches(d, c) {
-			continue
-		}
+	answer := func(e Entry) Result {
 		a, ok := e.Answer(d, c)
 		if !ok || len(a.Keys) == 0 {
 			if d.Weak {
@@ -349,6 +351,24 @@ func classify(reg []Entry, screen string, c Context) Result {
 			return unknown(e.ID, SignalDeclined)
 		}
 		return Result{Kind: Known, ID: e.ID, Signal: SignalKnown, Keys: a.Keys, Answer: a.Choice, Lines: d.Lines}
+	}
+	if Never(d.Lines) {
+		// Only an entry that names its own listed lines (NeverExempt), matches in full, and leaves nothing else on the
+		// list once exactly those lines are set aside gets past the never-answer list (ADR-0108).
+		for _, e := range reg {
+			if len(e.NeverExempt) > 0 && !d.Weak && e.matches(d, c) && !Never(withoutLines(d.Lines, e.NeverExempt)) {
+				return answer(e)
+			}
+		}
+		if d.Weak {
+			return Result{Kind: None}
+		}
+		return unknown(UnknownID, SignalNever)
+	}
+	for _, e := range reg {
+		if e.matches(d, c) {
+			return answer(e)
+		}
 	}
 	if d.Weak {
 		return Result{Kind: None}
@@ -387,6 +407,24 @@ func (e Entry) matches(d Dialog, c Context) bool {
 		}
 	}
 	return true
+}
+
+// withoutLines returns lines without the ones one of drop matches in full (after trimming and collapsing spaces).
+func withoutLines(lines []string, drop []*regexp.Regexp) []string {
+	var out []string
+	for _, l := range lines {
+		s := squash(l)
+		if !slices.ContainsFunc(drop, func(re *regexp.Regexp) bool { return fullMatch(re, s) }) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// fullMatch reports whether re matches all of s (a pattern without anchors cannot match part of a line).
+func fullMatch(re *regexp.Regexp, s string) bool {
+	loc := re.FindStringIndex(s)
+	return loc != nil && loc[0] == 0 && loc[1] == len(s)
 }
 
 // hasOptions reports whether every one of opts is among the dialog's options.

@@ -68,6 +68,9 @@ type dialogLaunch struct {
 	Dirs     []string `json:"dirs,omitempty"`
 	Home     string   `json:"home,omitempty"`
 	CodeMode bool     `json:"code_mode,omitempty"`
+	// TelemetryEndpoints are the trusted telemetry collectors at launch (harness.claude.trusted_telemetry_endpoints,
+	// ADR-0108): a later configuration change does not change what a running run's dialog may be answered with.
+	TelemetryEndpoints []string `json:"telemetry_endpoints,omitempty"`
 }
 
 // dialogWatch is one run's watch state.
@@ -138,6 +141,7 @@ func (a *Agent) saveDialogLaunch(runID, kind, version string, dirs []string, bui
 				}
 			}
 		}
+		l.TelemetryEndpoints = slices.Clone(a.o.Claude.TrustedTelemetryEndpoints)
 	}
 	var keep []string
 	for _, s := range secrets {
@@ -159,7 +163,8 @@ func (a *Agent) dialogContext(row runRow) dialog.Context {
 	if b, err := os.ReadFile(filepath.Join(a.runDir(row.RunID), dialogContextFile)); err == nil { //nolint:gosec // a fixed name in the run's own directory
 		_ = json.Unmarshal(b, &l)
 	}
-	c := dialog.Context{Harness: row.Harness, Version: l.Version, Dirs: l.Dirs, Home: l.Home, CodeMode: l.CodeMode}
+	c := dialog.Context{Harness: row.Harness, Version: l.Version, Dirs: l.Dirs, Home: l.Home, CodeMode: l.CodeMode,
+		TelemetryEndpoints: l.TelemetryEndpoints}
 	if c.Version == "" {
 		c.Version = row.Bin.Version
 	}

@@ -47,7 +47,7 @@ func fixture(t *testing.T, name string) string {
 	return string(b)
 }
 
-func newDialogEnv(t *testing.T, edit func(*proto.LaunchPayload)) *dialogEnv {
+func newDialogEnv(t *testing.T, edit func(*proto.LaunchPayload), agentEdits ...func(*Agent)) *dialogEnv {
 	t.Helper()
 	old := dialogQuiet
 	dialogQuiet = 50 * time.Millisecond
@@ -58,6 +58,9 @@ func newDialogEnv(t *testing.T, edit func(*proto.LaunchPayload)) *dialogEnv {
 	dir := t.TempDir()
 	m := srv.Manager(t, filepath.Join(dir, "harness", "claude-code"), nil)
 	a, f := ccAgent(t, dir, m, nil)
+	for _, ed := range agentEdits {
+		ed(a)
+	}
 	fc := newWSCentral(t, proto.MinorDialog)
 	startAgent(t, a, fc, clock.System{})
 	fc.next(t, proto.TypeHello)
@@ -694,4 +697,50 @@ func TestDialogFlaggedKnownDialogNotAnsweredLater(t *testing.T) {
 	if got := e.outcomes(); !slices.Equal(got, []string{"blocked:claude.code_mode_optin"}) {
 		t.Fatalf("outcomes %v", got)
 	}
+}
+
+// The managed-settings telemetry approval (ADR-0108) is answered only for a destination the node trusts
+// (harness.claude.trusted_telemetry_endpoints, saved with the run's launch facts); without one it flags the run and
+// nothing is typed.
+func TestDialogManagedSettingsTelemetry(t *testing.T) {
+	const endpoint = "https://telemetry.example.com/prod"
+	trust := func(a *Agent) { a.o.Claude.TrustedTelemetryEndpoints = []string{endpoint} }
+	t.Run("trusted", func(t *testing.T) {
+		e := newDialogEnv(t, nil, trust)
+		if c := e.a.dialogContext(getRun(t, e.a, e.run)); !slices.Equal(c.TelemetryEndpoints, []string{endpoint}) {
+			t.Fatalf("launch facts: %+v", c)
+		}
+		e.f.OnKeys = func(id string, _ []string) {
+			e.f.SetScreen(id, fixture(t, "claude-2.1.328-main-idle.txt"))
+			e.f.SetStatusReport(id, runner.Status{State: "idle", App: "claude-code"})
+		}
+		e.show(fixture(t, "claude-2.1.323-managed-settings-telemetry.txt"))
+		waitFor(t, "answered", func() bool { return len(e.dialogs()) > 0 })
+		quiet()
+		if got := e.f.KeysPressed(e.term); len(got) != 1 || !slices.Equal(got[0], []string{"enter"}) {
+			t.Fatalf("keys %v, want once [enter]", got)
+		}
+		ds := e.dialogs()
+		if len(ds) != 1 || ds[0].Outcome != proto.DialogAnswered || ds[0].Dialog != "claude.managed_settings_telemetry" ||
+			ds[0].Answer != "yes" || ds[0].Signal != dialog.SignalKnown {
+			t.Fatalf("run.dialog %+v", ds)
+		}
+		if r := e.lastReport(); r.StatusKind == proto.StatusKindDialog {
+			t.Fatalf("an answered dialog flagged the run: %+v", r)
+		}
+	})
+	t.Run("nothing trusted", func(t *testing.T) {
+		e := newDialogEnv(t, nil)
+		e.show(fixture(t, "claude-2.1.323-managed-settings-telemetry.txt"))
+		waitFor(t, "flagged", func() bool { return len(e.dialogs()) > 0 })
+		quiet()
+		if got := e.f.KeysPressed(e.term); len(got) != 0 {
+			t.Fatalf("an untrusted destination was answered: %v", got)
+		}
+		ds := e.dialogs()
+		if len(ds) != 1 || ds[0].Outcome != proto.DialogBlocked || ds[0].Dialog != "claude.managed_settings_telemetry" ||
+			ds[0].Signal != dialog.SignalDeclined {
+			t.Fatalf("run.dialog %+v", ds)
+		}
+	})
 }

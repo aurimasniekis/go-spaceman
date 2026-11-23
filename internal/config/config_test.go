@@ -517,3 +517,31 @@ func TestWorktreeRetentionLimitConfig(t *testing.T) {
 		t.Fatalf("bound rejected: %v", err)
 	}
 }
+
+// harness.claude.trusted_telemetry_endpoints takes only plain https URLs (ADR-0108).
+func TestAgentTrustedTelemetryEndpoints(t *testing.T) {
+	ok := DefaultAgent()
+	ok.Central.URL = "https://c.example.com"
+	ok.Harness.Claude.TrustedTelemetryEndpoints = []string{"https://telemetry.example.com/prod", "https://otel.example.com:4318"}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("valid endpoints refused: %v", err)
+	}
+	for _, raw := range []string{
+		"http://telemetry.example.com", "https://user:pw@telemetry.example.com", "https://telemetry.example.com/?k=v",
+		"https://telemetry.example.com/#x", "https://", "telemetry.example.com", "https://telemetry.example.com/a b",
+	} {
+		bad := ok
+		bad.Harness.Claude.TrustedTelemetryEndpoints = []string{raw}
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "harness.claude.trusted_telemetry_endpoints") {
+			t.Errorf("%q: %v", raw, err)
+		}
+	}
+	many := ok
+	many.Harness.Claude.TrustedTelemetryEndpoints = make([]string, 11)
+	for i := range many.Harness.Claude.TrustedTelemetryEndpoints {
+		many.Harness.Claude.TrustedTelemetryEndpoints[i] = "https://telemetry.example.com/" + string(rune('a'+i))
+	}
+	if err := many.Validate(); err == nil || !strings.Contains(err.Error(), "at most 10") {
+		t.Errorf("11 endpoints: %v", err)
+	}
+}

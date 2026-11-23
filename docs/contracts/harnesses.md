@@ -34,6 +34,15 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
     `codeModeCaveatsAcceptedV1: true` and `codeModeAutoModeCaveatAcceptedV1: true`, which SpaceMan seeds only when the
     profile's settings env sets the variable. A resumed session started without Code Mode keeps running without it.
     Gateway runs refuse the variable (it is not in the gateway's safe env list), so they never start in Code Mode.
+  - With a `claude setup-token` token (no account profile in the config dir) of an organisation that pushes
+    server-managed settings redirecting telemetry (`OTEL_EXPORTER_OTLP_ENDPOINT` …), every session of a new config dir
+    first stops at "Managed settings require approval … Telemetry destination: · OTEL_EXPORTER_OTLP_ENDPOINT=<url> …
+    Approving applies: env var ×1 — this redirects where telemetry from this machine is sent" (options "1. Yes, I trust
+    these settings", "2. No, exit Claude Code"; seen on 2.1.323, 2026-11-23). The approval is kept for the session only
+    (`isRemoteManagedSettingsVerifiedAndApprovedForSession`); a node-wide `/etc/claude-code/managed-settings.json` with
+    the same env does not avoid it. A config dir that already holds an approved `remote-settings.json` started without it
+    (observed once, not relied on). A full claude.ai login of a Team organisation applies the same settings without the
+    dialog. SpaceMan answers it only for trusted collectors (ADR-0108).
     (Read from the Claude Code 2.1.325 bundle and seen on a live run at 2.1.328; the seed itself is not yet run live.)
   - The startup notice says auto mode is the default permission mode in this version.
   - Inherited `CLAUDE_CODE_CHILD_SESSION` (set inside another Claude Code session) turns transcript saving off; the

@@ -33,6 +33,9 @@ type ClaudeOptions struct {
 	// SelfUpdate lets unmanaged runs update themselves: without it every Claude Code run gets the updater-off
 	// variables. Managed runs always get them (nothing would launch a self-updated copy).
 	SelfUpdate bool
+	// TrustedTelemetryEndpoints are the telemetry collector URLs a managed-settings approval dialog may be accepted for
+	// (harness.claude.trusted_telemetry_endpoints, ADR-0108). Saved with each run's launch facts.
+	TrustedTelemetryEndpoints []string
 }
 
 // managedClaude reports whether this node manages Claude Code.

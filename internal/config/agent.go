@@ -113,6 +113,14 @@ type ClaudeCodeConfig struct {
 	// SelfUpdate lets Claude Code update itself in runs when manage is off. Off (default): every Claude Code run gets
 	// DISABLE_AUTOUPDATER=1 and DISABLE_UPDATES=1. It can't be on with manage, whose runs never update themselves.
 	SelfUpdate bool `yaml:"self_update"`
+	// TrustedTelemetryEndpoints are OpenTelemetry collector URLs the operator recognises as their organisation's
+	// (ADR-0108). Claude Code stops at "Managed settings require approval" before it applies an organisation's
+	// server-managed settings that redirect its telemetry, and with a `claude setup-token` login it asks at every session
+	// start. The node answers "Yes, I trust these settings" only when that dialog is about telemetry destinations alone
+	// and every destination it names is one of these URLs, exactly as Claude Code shows it; anything else on it keeps the
+	// run flagged blocked_on_dialog. Empty (default): the dialog is always flagged. At most 10 https URLs, without
+	// credentials, query or fragment.
+	TrustedTelemetryEndpoints []string `yaml:"trusted_telemetry_endpoints"`
 }
 
 // IsProduction reports whether the agent runs in production mode.
